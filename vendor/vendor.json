@@ -1,0 +1,87 @@
+{
+	"comment": "",
+	"ignore": "test",
+	"package": [
+		{
+			"checksumSHA1": "B+GonfgNwOAJMEe0WUHQGATRtMA=",
+			"path": "github.com/Microsoft/go-winio",
+			"revision": "562bb09f6612d9a4e91597184709d1cdba95af93",
+			"revisionTime": "2016-11-03T18:56:17Z"
+		},
+		{
+			"checksumSHA1": "z9ckOyaoHErgXLQDx514AOMxdeo=",
+			"path": "github.com/Sirupsen/logrus",
+			"revision": "abc6f20dabf4b10195f233ad21ea6c5ba33acae0",
+			"revisionTime": "2016-11-11T12:09:51Z"
+		},
+		{
+			"checksumSHA1": "RBwpnMpfQt7Jo7YWrRph0Vwe+f0=",
+			"path": "github.com/coreos/go-systemd/activation",
+			"revision": "48702e0da86bd25e76cfef347e2adeb434a0d0a6",
+			"revisionTime": "2016-11-14T12:22:54Z"
+		},
+		{
+			"checksumSHA1": "e8qgBHxXbij3RVspqrkeBzMZ564=",
+			"path": "github.com/coreos/go-systemd/util",
+			"revision": "48702e0da86bd25e76cfef347e2adeb434a0d0a6",
+			"revisionTime": "2016-11-14T12:22:54Z"
+		},
+		{
+			"checksumSHA1": "O8c/VKtW34XPJNNlyeb/im8vWSI=",
+			"path": "github.com/coreos/pkg/dlopen",
+			"revision": "447b7ec906e523386d9c53be15b55a8ae86ea944",
+			"revisionTime": "2016-10-26T22:29:26Z"
+		},
+		{
+			"checksumSHA1": "wV/3d0bXQI540Y6lVXgwfxfboys=",
+			"path": "github.com/docker/go-connections/sockets",
+			"revision": "4ccf312bf1d35e5dbda654e57a9be4c3f3cd0366",
+			"revisionTime": "2016-11-15T16:18:49Z"
+		},
+		{
+			"checksumSHA1": "O8CWhk39rLpO38BIrEa7TKPSIGE=",
+			"path": "github.com/docker/go-plugins-helpers/network",
+			"revision": "60d242cfd0fb30e5002fbf76bf6872e81e85adba",
+			"revisionTime": "2016-10-31T11:46:40Z"
+		},
+		{
+			"checksumSHA1": "SK1epV582t6zeBtowO7cidLFgRE=",
+			"path": "github.com/docker/go-plugins-helpers/sdk",
+			"revision": "60d242cfd0fb30e5002fbf76bf6872e81e85adba",
+			"revisionTime": "2016-10-31T11:46:40Z"
+		},
+		{
+			"checksumSHA1": "3AoPMXlmVq2+iWMpsdJZkcUKHB8=",
+			"path": "github.com/opencontainers/runc/libcontainer/user",
+			"revision": "43c43004ef0563ceab23bb8f254cd5061a6f607e",
+			"revisionTime": "2016-11-14T11:01:43Z"
+		},
+		{
+			"checksumSHA1": "w2mF2cKDob+aDSFxR5n3g2W9Slo=",
+			"path": "github.com/urfave/cli",
+			"revision": "a14d7d367bc02b1f57d88de97926727f2d936387",
+			"revisionTime": "2016-08-29T00:43:50Z",
+			"version": "v1.18.1",
+			"versionExact": "v1.18.1"
+		},
+		{
+			"checksumSHA1": "LvdVRE0FqdR68SvVpRkHs1rxhcA=",
+			"path": "golang.org/x/net/proxy",
+			"revision": "e57319ce2bbbdc638169d4756554fbaedc805399",
+			"revisionTime": "2016-11-15T18:38:51Z"
+		},
+		{
+			"checksumSHA1": "KqecwXo3OO+p4N+E9RhlHvl9I+w=",
+			"path": "golang.org/x/sys/unix",
+			"revision": "b699b7032584f0953262cb2788a0ca19bb494703",
+			"revisionTime": "2016-11-10T11:58:56Z"
+		},
+		{
+			"checksumSHA1": "fpW2dhGFC6SrVzipJx7fjg2DIH8=",
+			"path": "golang.org/x/sys/windows",
+			"revision": "b699b7032584f0953262cb2788a0ca19bb494703",
+			"revisionTime": "2016-11-10T11:58:56Z"
+		}
+	],
+	"rootPath": "github.com/yunify/docker-plugin-hostnic"
+}
