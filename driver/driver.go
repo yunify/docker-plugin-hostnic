@@ -1,29 +1,30 @@
 package driver
 
 import (
+	"fmt"
 	"github.com/docker/go-plugins-helpers/network"
 	"github.com/yunify/docker-plugin-hostnic/log"
-	"fmt"
-	"strings"
 	"net"
+	"strings"
 )
 
 const (
-	networkType = "hostnic"
+	networkType      = "hostnic"
 	excludeNicOption = "exclude_nic"
 )
-var defaultExcludeNic = [2]string{"eth0","ens3"}
+
+var defaultExcludeNic = [2]string{"eth0", "ens3"}
 
 //HostNicDriver implements github.com/docker/go-plugins-helpers/network.Driver
 type HostNicDriver struct {
 	network     string
 	excludeNics []string
-	endpoints  map[string]string
-	allNics  []string
+	endpoints   map[string]string
+	allNics     []string
 }
 
-func (d *HostNicDriver) GetCapabilities () (*network.CapabilitiesResponse, error)  {
-	return &network.CapabilitiesResponse{Scope:network.LocalScope}, nil
+func (d *HostNicDriver) GetCapabilities() (*network.CapabilitiesResponse, error) {
+	return &network.CapabilitiesResponse{Scope: network.LocalScope}, nil
 }
 
 func (d *HostNicDriver) CreateNetwork(r *network.CreateNetworkRequest) error {
@@ -36,28 +37,29 @@ func (d *HostNicDriver) CreateNetwork(r *network.CreateNetworkRequest) error {
 
 	return nil
 }
-func (d *HostNicDriver) AllocateNetwork(r *network.AllocateNetworkRequest) (*network.AllocateNetworkResponse, error){
+func (d *HostNicDriver) AllocateNetwork(r *network.AllocateNetworkRequest) (*network.AllocateNetworkResponse, error) {
 	log.Debug("AllocateNetwork Called: [ %+v ]", r)
-	return nil,nil
+	return nil, nil
 }
-func (d *HostNicDriver) DeleteNetwork(r *network.DeleteNetworkRequest) error{
+func (d *HostNicDriver) DeleteNetwork(r *network.DeleteNetworkRequest) error {
 	log.Debug("DeleteNetwork Called: [ %+v ]", r)
 	d.network = ""
 	return nil
 }
-func (d *HostNicDriver) FreeNetwork(r *network.FreeNetworkRequest) error{
+func (d *HostNicDriver) FreeNetwork(r *network.FreeNetworkRequest) error {
 	log.Debug("FreeNetwork Called: [ %+v ]", r)
 	return nil
 }
-func (d *HostNicDriver) CreateEndpoint(r *network.CreateEndpointRequest) (*network.CreateEndpointResponse, error){
+func (d *HostNicDriver) CreateEndpoint(r *network.CreateEndpointRequest) (*network.CreateEndpointResponse, error) {
 	log.Debug("CreateEndpoint Called: [ %+v ]", r)
-	return nil,nil
+	log.Debug("r.Interface: [ %+v ]", r.Interface)
+	return nil, nil
 }
-func (d *HostNicDriver) DeleteEndpoint(r *network.DeleteEndpointRequest) error{
+func (d *HostNicDriver) DeleteEndpoint(r *network.DeleteEndpointRequest) error {
 	log.Debug("DeleteEndpoint Called: [ %+v ]", r)
 	return nil
 }
-func (d *HostNicDriver) EndpointInfo(r *network.InfoRequest) (*network.InfoResponse, error){
+func (d *HostNicDriver) EndpointInfo(r *network.InfoRequest) (*network.InfoResponse, error) {
 	log.Debug("EndpointInfo Called: [ %+v ]", r)
 	//TODO
 	res := &network.InfoResponse{
@@ -65,7 +67,7 @@ func (d *HostNicDriver) EndpointInfo(r *network.InfoRequest) (*network.InfoRespo
 	}
 	return res, nil
 }
-func (d *HostNicDriver) Join(r *network.JoinRequest) (*network.JoinResponse, error){
+func (d *HostNicDriver) Join(r *network.JoinRequest) (*network.JoinResponse, error) {
 	log.Debug("Join Called: [ %+v ]", r)
 	if sID, ok := d.endpoints[r.EndpointID]; ok {
 		return nil, fmt.Errorf("Endpoint %s has bean bind to %s", r.EndpointID, sID)
@@ -74,30 +76,30 @@ func (d *HostNicDriver) Join(r *network.JoinRequest) (*network.JoinResponse, err
 	if err != nil {
 		return nil, err
 	}
-	d.endpoints[r.EndpointID] =  r.SandboxKey
+	d.endpoints[r.EndpointID] = r.SandboxKey
 	resp := network.JoinResponse{
-		InterfaceName: network.InterfaceName{SrcName:nic.Name,DstPrefix:"eth"},
-		DisableGatewayService:true,
+		InterfaceName:         network.InterfaceName{SrcName: nic.Name, DstPrefix: "eth"},
+		DisableGatewayService: true,
 	}
-	return &resp,nil
+	return &resp, nil
 }
 func (d *HostNicDriver) Leave(r *network.LeaveRequest) error {
 	log.Debug("Join Called: [ %+v ]", r)
 	return nil
 }
-func (d *HostNicDriver) DiscoverNew(r *network.DiscoveryNotification) error{
+func (d *HostNicDriver) DiscoverNew(r *network.DiscoveryNotification) error {
 	log.Debug("DiscoverNew Called: [ %+v ]", r)
 	return nil
 }
-func (d *HostNicDriver) DiscoverDelete(r *network.DiscoveryNotification) error{
+func (d *HostNicDriver) DiscoverDelete(r *network.DiscoveryNotification) error {
 	log.Debug("DiscoverDelete Called: [ %+v ]", r)
 	return nil
 }
-func (d *HostNicDriver) ProgramExternalConnectivity(r *network.ProgramExternalConnectivityRequest) error{
+func (d *HostNicDriver) ProgramExternalConnectivity(r *network.ProgramExternalConnectivityRequest) error {
 	log.Debug("ProgramExternalConnectivity Called: [ %+v ]", r)
 	return nil
 }
-func (d *HostNicDriver) RevokeExternalConnectivity(r *network.RevokeExternalConnectivityRequest) error{
+func (d *HostNicDriver) RevokeExternalConnectivity(r *network.RevokeExternalConnectivityRequest) error {
 	log.Debug("RevokeExternalConnectivity Called: [ %+v ]", r)
 	return nil
 }
@@ -106,9 +108,9 @@ func getExcludeNic(r *network.CreateNetworkRequest) []string {
 	var excludeNics []string
 	if r.Options != nil {
 		if value, ok := r.Options[excludeNicOption].(string); ok {
-			excludeNics = strings.Split(value,".")
+			excludeNics = strings.Split(value, ".")
 		}
-	}else{
+	} else {
 		copy(excludeNics[:], defaultExcludeNic[:])
 	}
 	return excludeNics
@@ -116,7 +118,7 @@ func getExcludeNic(r *network.CreateNetworkRequest) []string {
 
 func getNics() []net.Interface {
 	nics, err := net.Interfaces()
-	result := make( []net.Interface,0, len(nics))
+	result := make([]net.Interface, 0, len(nics))
 	if err == nil {
 		for _, nic := range nics {
 			//exclude lo
@@ -124,7 +126,7 @@ func getNics() []net.Interface {
 				result = append(result, nic)
 			}
 		}
-	}else {
+	} else {
 
 	}
 	return result
