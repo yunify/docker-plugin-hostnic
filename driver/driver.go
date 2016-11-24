@@ -64,6 +64,7 @@ func New() *HostNicDriver {
 	d := &HostNicDriver{
 		excludeNics: excludeNics,
 		allnic:      make(NicTable),
+		endpoints:   make(map[string]*Endpoint),
 		lock:        sync.RWMutex{},
 		nlh:         &netlink.Handle{},
 	}
@@ -122,7 +123,7 @@ func (d *HostNicDriver) CreateEndpoint(r *network.CreateEndpointRequest) (*netwo
 	if hostNic == nil {
 		return nil, errors.New("Can not find a free interface")
 	}
-	hostIfName := hostNic.NetInterface.Name
+	//hostIfName := hostNic.NetInterface.Name
 
 	// Generate a name for what will be the sandbox side pipe interface
 	containerIfName, err := netutils.GenerateIfaceName(d.nlh, vethPrefix, vethLen)
@@ -131,38 +132,37 @@ func (d *HostNicDriver) CreateEndpoint(r *network.CreateEndpointRequest) (*netwo
 	}
 
 	// Generate and add the interface pipe host <-> sandbox
-	veth := &netlink.Veth{
-		LinkAttrs: netlink.LinkAttrs{Name: hostIfName, TxQLen: 0},
-		PeerName:  containerIfName}
-	if err = d.nlh.LinkAdd(veth); err != nil {
-		return nil, fmt.Errorf("failed to add the host (%s) <=> sandbox (%s) pair interfaces: %v", hostIfName, containerIfName, err)
-	}
+	//veth := &netlink.Veth{
+	//	LinkAttrs: netlink.LinkAttrs{Name: hostIfName, TxQLen: 0},
+	//	PeerName:  containerIfName}
+	//if err = d.nlh.LinkAdd(veth); err != nil {
+	//	return nil, fmt.Errorf("failed to add the host (%s) <=> sandbox (%s) pair interfaces: %v", hostIfName, containerIfName, err)
+	//}
 
 	// Get the host side pipe interface handler
-	host, err := d.nlh.LinkByName(hostIfName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to find host side interface %s: %v", hostIfName, err)
-	}
-	defer func() {
-		if err != nil {
-			d.nlh.LinkDel(host)
-		}
-	}()
-
-	// Get the sandbox side pipe interface handler
-	sbox, err := d.nlh.LinkByName(containerIfName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to find sandbox side interface %s: %v", containerIfName, err)
-	}
-	defer func() {
-		if err != nil {
-			d.nlh.LinkDel(sbox)
-		}
-	}()
-
+	//host, err := d.nlh.LinkByName(hostIfName)
+	//if err != nil {
+	//	return nil, fmt.Errorf("failed to find host side interface %s: %v", hostIfName, err)
+	//}
+	//defer func() {
+	//	if err != nil {
+	//		d.nlh.LinkDel(host)
+	//	}
+	//}()
+	//
+	//// Get the sandbox side pipe interface handler
+	//sbox, err := d.nlh.LinkByName(containerIfName)
+	//if err != nil {
+	//	return nil, fmt.Errorf("failed to find sandbox side interface %s: %v", containerIfName, err)
+	//}
+	//defer func() {
+	//	if err != nil {
+	//		d.nlh.LinkDel(sbox)
+	//	}
+	//}()
+	//
 	resp := &network.CreateEndpointResponse{
 		Interface: &network.EndpointInterface{
-			MacAddress: hostNic.HardwareAddr(),
 			Address:    hostNic.Addr(),
 		},
 	}
@@ -217,7 +217,7 @@ func (d *HostNicDriver) CreateEndpoint(r *network.CreateEndpointRequest) (*netwo
 	//if err = d.storeUpdate(endpoint); err != nil {
 	//	return fmt.Errorf("failed to save bridge endpoint %s to store: %v", endpoint.id[0:7], err)
 	//}
-
+	log.Debug("CreateEndpoint resp: [ %+v ]", resp.Interface)
 	return resp, nil
 }
 func (d *HostNicDriver) DeleteEndpoint(r *network.DeleteEndpointRequest) error {

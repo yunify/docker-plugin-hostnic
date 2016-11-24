@@ -35,7 +35,7 @@ func Run(ctx *cli.Context) {
 		log.SetLevel("debug")
 	}
 	log.Info("Run %s", ctx.App.Name)
-	d := &driver.HostNicDriver{}
+	d := driver.New()
 	h := network.NewHandler(d)
 	err := h.ServeUnix("root", "hostnic")
 	if err != nil {
