@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+
+source ./env
+
+echo "Release docker-plugin-hostnic alpine version ..."
+mkdir -p bin/alpine
+docker build -t docker_plugin_builder -f Dockerfile.build.alpine .
+docker run -ti --rm -v $(pwd):/app docker_plugin_builder ./build bin/alpine/docker-plugin-hostnic
+
+ls -lh bin/*

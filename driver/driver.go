@@ -5,8 +5,7 @@ import (
 	"fmt"
 	"github.com/docker/go-plugins-helpers/network"
 	"github.com/docker/libnetwork/netutils"
-	"github.com/docker/libnetwork/types"
-	"github.com/hashicorp/netlink"
+	"github.com/vishvananda/netlink"
 	"github.com/yunify/docker-plugin-hostnic/log"
 	"net"
 	"strings"
@@ -28,7 +27,7 @@ type NicTable map[string]*HostNic
 
 type HostNic struct {
 	NetInterface net.Interface
-	endpoint     *endpoint
+	endpoint     *Endpoint
 }
 
 func (n *HostNic) HardwareAddr() string {
@@ -49,14 +48,26 @@ func (n *HostNic) Addr() string {
 	return ""
 }
 
-type endpoint struct {
-	id          string
-	hostNic     *HostNic
-	srcName     string
-	portMapping []types.PortBinding // Operation port bindings
-	dbIndex     uint64
-	dbExists    bool
-	sandboxKey  string
+type Endpoint struct {
+	id      string
+	hostNic *HostNic
+	srcName string
+	//portMapping []types.PortBinding // Operation port bindings
+	dbIndex    uint64
+	dbExists   bool
+	sandboxKey string
+}
+
+func New() *HostNicDriver {
+	var excludeNics []string
+	copy(excludeNics[:], defaultExcludeNic[:])
+	d := &HostNicDriver{
+		excludeNics: excludeNics,
+		allnic:      make(NicTable),
+		lock:        sync.RWMutex{},
+		nlh:         &netlink.Handle{},
+	}
+	return d
 }
 
 //HostNicDriver implements github.com/docker/go-plugins-helpers/network.Driver
@@ -64,7 +75,7 @@ type HostNicDriver struct {
 	network     string
 	excludeNics []string
 	allnic      NicTable
-	endpoints   map[string]*endpoint
+	endpoints   map[string]*Endpoint
 	lock        sync.RWMutex
 	nlh         *netlink.Handle
 }
@@ -116,7 +127,7 @@ func (d *HostNicDriver) CreateEndpoint(r *network.CreateEndpointRequest) (*netwo
 	// Generate a name for what will be the sandbox side pipe interface
 	containerIfName, err := netutils.GenerateIfaceName(d.nlh, vethPrefix, vethLen)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Generate and add the interface pipe host <-> sandbox
@@ -124,13 +135,13 @@ func (d *HostNicDriver) CreateEndpoint(r *network.CreateEndpointRequest) (*netwo
 		LinkAttrs: netlink.LinkAttrs{Name: hostIfName, TxQLen: 0},
 		PeerName:  containerIfName}
 	if err = d.nlh.LinkAdd(veth); err != nil {
-		return types.InternalErrorf("failed to add the host (%s) <=> sandbox (%s) pair interfaces: %v", hostIfName, containerIfName, err)
+		return nil, fmt.Errorf("failed to add the host (%s) <=> sandbox (%s) pair interfaces: %v", hostIfName, containerIfName, err)
 	}
 
 	// Get the host side pipe interface handler
 	host, err := d.nlh.LinkByName(hostIfName)
 	if err != nil {
-		return types.InternalErrorf("failed to find host side interface %s: %v", hostIfName, err)
+		return nil, fmt.Errorf("failed to find host side interface %s: %v", hostIfName, err)
 	}
 	defer func() {
 		if err != nil {
@@ -141,7 +152,7 @@ func (d *HostNicDriver) CreateEndpoint(r *network.CreateEndpointRequest) (*netwo
 	// Get the sandbox side pipe interface handler
 	sbox, err := d.nlh.LinkByName(containerIfName)
 	if err != nil {
-		return types.InternalErrorf("failed to find sandbox side interface %s: %v", containerIfName, err)
+		return nil, fmt.Errorf("failed to find sandbox side interface %s: %v", containerIfName, err)
 	}
 	defer func() {
 		if err != nil {
@@ -155,15 +166,15 @@ func (d *HostNicDriver) CreateEndpoint(r *network.CreateEndpointRequest) (*netwo
 			Address:    hostNic.Addr(),
 		},
 	}
-	endpint := &endpoint{}
+	endpoint := &Endpoint{}
 
 	// Store the sandbox side pipe interface parameters
 	endpoint.srcName = containerIfName
-	endpint.hostNic = hostNic
-	endpint.id = r.EndpointID
+	endpoint.hostNic = hostNic
+	endpoint.id = r.EndpointID
 
-	d.endpoints[endpint.id] = endpint
-	hostNic.endpoint = endpint
+	d.endpoints[endpoint.id] = endpoint
+	hostNic.endpoint = endpoint
 
 	// Set the sbox's MAC if not provided. If specified, use the one configured by user, otherwise generate one based on IP.
 	//if endpoint.macAddress == nil {
@@ -232,7 +243,6 @@ func (d *HostNicDriver) Join(r *network.JoinRequest) (*network.JoinResponse, err
 	}
 
 	endpoint.sandboxKey = r.SandboxKey
-	d.endpoints[r.EndpointID] = r.SandboxKey
 	resp := network.JoinResponse{
 		InterfaceName:         network.InterfaceName{SrcName: endpoint.srcName, DstPrefix: containerVethPrefix},
 		DisableGatewayService: true,
@@ -337,4 +347,5 @@ func (d *HostNicDriver) getUnusedNic() *HostNic {
 			return nic
 		}
 	}
+	return nil
 }

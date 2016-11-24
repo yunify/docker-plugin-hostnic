@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+
+
+OUTPUT=${1:-bin/docker-plugin-hostnic}
+
+echo "Building docker-plugin-hostnic ..."
+mkdir -p bin
+go build -o $OUTPUT .

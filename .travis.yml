@@ -1,0 +1,24 @@
+sudo: required
+
+language: go
+
+services:
+    - docker
+
+go:
+    - 1.7
+before_install:
+install:
+    - "./build_with_docker"
+script:
+    - "./test"
+after_success:
+    - docker login -e="$DOCKER_EMAIL" -u="$DOCKER_USERNAME" -p="$DOCKER_PASSWORD";
+    - docker build -t qingcloud/docker-plugin-hostnic .
+    - if [ "$TRAVIS_BRANCH" == "master" ]; then
+        docker push qingcloud/docker-plugin-hostnic;
+      else
+        echo $TRAVIS_BRANCH;
+        docker tag qingcloud/docker-plugin-hostnic qingcloud/docker-plugin-hostnic:$TRAVIS_BRANCH;
+        docker push qingcloud/docker-plugin-hostnic:$TRAVIS_BRANCH;
+      fi
