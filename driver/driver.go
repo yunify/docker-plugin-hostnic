@@ -1,33 +1,25 @@
 package driver
 
 import (
-	"errors"
 	"fmt"
 	"github.com/docker/go-plugins-helpers/network"
-	"github.com/docker/libnetwork/netutils"
-	"github.com/vishvananda/netlink"
 	"github.com/yunify/docker-plugin-hostnic/log"
 	"net"
-	"strings"
 	"sync"
 )
 
 const (
-	networkType      = "hostnic"
-	excludeNicOption = "exclude_nic"
-
-	vethPrefix          = "veth"
-	vethLen             = 7
+	networkType         = "hostnic"
 	containerVethPrefix = "eth"
 )
-
-var defaultExcludeNic = [2]string{"eth0", "ens3"}
 
 type NicTable map[string]*HostNic
 
 type HostNic struct {
 	NetInterface net.Interface
 	endpoint     *Endpoint
+	//addr cache.
+	addr string
 }
 
 func (n *HostNic) HardwareAddr() string {
@@ -35,14 +27,20 @@ func (n *HostNic) HardwareAddr() string {
 }
 
 func (n *HostNic) Addr() string {
+	if n.addr != "" {
+		return n.addr
+	}
 	addrs, err := n.NetInterface.Addrs()
 	if err != nil {
 		log.Error("Get interface [%+v] addr error: %s", n.NetInterface, err.Error())
 		return ""
 	}
 	for _, addr := range addrs {
-		if addr.String() != "" {
-			return addr.String()
+		if ipnet, ok := addr.(*net.IPNet); ok {
+			if ipnet.IP.To4() != nil {
+				n.addr = ipnet.String()
+				return n.addr
+			}
 		}
 	}
 	return ""
@@ -59,26 +57,21 @@ type Endpoint struct {
 }
 
 func New() *HostNicDriver {
-	var excludeNics []string
-	copy(excludeNics[:], defaultExcludeNic[:])
 	d := &HostNicDriver{
-		excludeNics: excludeNics,
-		allnic:      make(NicTable),
-		endpoints:   make(map[string]*Endpoint),
-		lock:        sync.RWMutex{},
-		nlh:         &netlink.Handle{},
+		endpoints: make(map[string]*Endpoint),
+		lock:      sync.RWMutex{},
+		nics:      make(NicTable),
 	}
 	return d
 }
 
 //HostNicDriver implements github.com/docker/go-plugins-helpers/network.Driver
 type HostNicDriver struct {
-	network     string
-	excludeNics []string
-	allnic      NicTable
-	endpoints   map[string]*Endpoint
-	lock        sync.RWMutex
-	nlh         *netlink.Handle
+	network   string
+	nics      NicTable
+	endpoints map[string]*Endpoint
+	lock      sync.RWMutex
+	ipv4Data  *network.IPAMData
 }
 
 func (d *HostNicDriver) GetCapabilities() (*network.CapabilitiesResponse, error) {
@@ -87,12 +80,18 @@ func (d *HostNicDriver) GetCapabilities() (*network.CapabilitiesResponse, error)
 
 func (d *HostNicDriver) CreateNetwork(r *network.CreateNetworkRequest) error {
 	log.Debug("CreateNetwork Called: [ %+v ]", r)
+	log.Debug("CreateNetwork IPv4Data len : [ %v ]", len(r.IPv4Data))
+	d.lock.Lock()
+	defer d.lock.Unlock()
+
 	if d.network != "" {
 		fmt.Errorf("only one instance of %s network is allowed,  network [%s] exist.", networkType, d.network)
 	}
 	d.network = r.NetworkID
-	d.excludeNics = getExcludeNic(r)
-
+	if r.IPv4Data != nil && len(r.IPv4Data) > 0 {
+		d.ipv4Data = r.IPv4Data[0]
+		log.Debug("CreateNetwork IPv4Data : [ %+v ]", d.ipv4Data)
+	}
 	return nil
 }
 func (d *HostNicDriver) AllocateNetwork(r *network.AllocateNetworkRequest) (*network.AllocateNetworkResponse, error) {
@@ -101,7 +100,13 @@ func (d *HostNicDriver) AllocateNetwork(r *network.AllocateNetworkRequest) (*net
 }
 func (d *HostNicDriver) DeleteNetwork(r *network.DeleteNetworkRequest) error {
 	log.Debug("DeleteNetwork Called: [ %+v ]", r)
+	d.lock.Lock()
+	defer d.lock.Unlock()
 	d.network = ""
+	d.ipv4Data = nil
+	d.endpoints = make(map[string]*Endpoint)
+	d.nics = make(NicTable)
+
 	return nil
 }
 func (d *HostNicDriver) FreeNetwork(r *network.FreeNetworkRequest) error {
@@ -115,122 +120,72 @@ func (d *HostNicDriver) CreateEndpoint(r *network.CreateEndpointRequest) (*netwo
 	log.Debug("CreateEndpoint Called: [ %+v ]", r)
 	log.Debug("r.Interface: [ %+v ]", r.Interface)
 
-	hardwareAdddr := r.Interface.MacAddress
-	hostNic := d.GetHostNicByHardwareAddr(hardwareAdddr)
+	var hostNic *HostNic
+	if r.Interface.Address != "" {
+		hostNic = d.FindNicByAddr(r.Interface.Address)
+	}
+	//if r.Interface.MacAddress != "" {
+	//	hostNic = d.FindNicByHardwareAddr(r.Interface.MacAddress)
+	//}
 	if hostNic == nil {
-		hostNic = d.GetUnusedNic()
-	}
-	if hostNic == nil {
-		return nil, errors.New("Can not find a free interface")
-	}
-	//hostIfName := hostNic.NetInterface.Name
-
-	// Generate a name for what will be the sandbox side pipe interface
-	containerIfName, err := netutils.GenerateIfaceName(d.nlh, vethPrefix, vethLen)
-	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("Can not find host interface by request interface [%+v] ", r.Interface)
 	}
 
-	// Generate and add the interface pipe host <-> sandbox
-	//veth := &netlink.Veth{
-	//	LinkAttrs: netlink.LinkAttrs{Name: hostIfName, TxQLen: 0},
-	//	PeerName:  containerIfName}
-	//if err = d.nlh.LinkAdd(veth); err != nil {
-	//	return nil, fmt.Errorf("failed to add the host (%s) <=> sandbox (%s) pair interfaces: %v", hostIfName, containerIfName, err)
-	//}
-
-	// Get the host side pipe interface handler
-	//host, err := d.nlh.LinkByName(hostIfName)
-	//if err != nil {
-	//	return nil, fmt.Errorf("failed to find host side interface %s: %v", hostIfName, err)
-	//}
-	//defer func() {
-	//	if err != nil {
-	//		d.nlh.LinkDel(host)
-	//	}
-	//}()
-	//
-	//// Get the sandbox side pipe interface handler
-	//sbox, err := d.nlh.LinkByName(containerIfName)
-	//if err != nil {
-	//	return nil, fmt.Errorf("failed to find sandbox side interface %s: %v", containerIfName, err)
-	//}
-	//defer func() {
-	//	if err != nil {
-	//		d.nlh.LinkDel(sbox)
-	//	}
-	//}()
-	//
-	resp := &network.CreateEndpointResponse{
-		Interface: &network.EndpointInterface{
-			Address:    hostNic.Addr(),
-		},
+	if r.Interface.MacAddress != "" {
+		if hostNic.HardwareAddr() != r.Interface.MacAddress {
+			return nil, fmt.Errorf("Request interface [%+v] ip address miss match with mac address ", r.Interface)
+		}
 	}
+
+	if hostNic.endpoint != nil {
+		return nil, fmt.Errorf("host nic [%s] has bind to endpoint [ %+v ] ", hostNic.NetInterface.Name, hostNic.endpoint)
+	}
+
+	//TODO check host ip and driver network
+
+	hostIfName := hostNic.NetInterface.Name
+
 	endpoint := &Endpoint{}
 
 	// Store the sandbox side pipe interface parameters
-	endpoint.srcName = containerIfName
+	endpoint.srcName = hostIfName
 	endpoint.hostNic = hostNic
 	endpoint.id = r.EndpointID
 
 	d.endpoints[endpoint.id] = endpoint
 	hostNic.endpoint = endpoint
 
-	// Set the sbox's MAC if not provided. If specified, use the one configured by user, otherwise generate one based on IP.
-	//if endpoint.macAddress == nil {
-	//	endpoint.macAddress = electMacAddress(epConfig, endpoint.addr.IP)
-	//	if err = ifInfo.SetMacAddress(endpoint.macAddress); err != nil {
-	//		return err
-	//	}
-	//}
-
-	// Up the host interface after finishing all netlink configuration
-	//if err = d.nlh.LinkSetUp(host); err != nil {
-	//	return fmt.Errorf("could not set link up for host interface %s: %v", hostIfName, err)
-	//}
-
-	//if endpoint.addrv6 == nil && config.EnableIPv6 {
-	//	var ip6 net.IP
-	//	network := n.bridge.bridgeIPv6
-	//	if config.AddressIPv6 != nil {
-	//		network = config.AddressIPv6
-	//	}
-	//
-	//	ones, _ := network.Mask.Size()
-	//	if ones > 80 {
-	//		err = types.ForbiddenErrorf("Cannot self generate an IPv6 address on network %v: At least 48 host bits are needed.", network)
-	//		return err
-	//	}
-	//
-	//	ip6 = make(net.IP, len(network.IP))
-	//	copy(ip6, network.IP)
-	//	for i, h := range endpoint.macAddress {
-	//		ip6[i+10] = h
-	//	}
-	//
-	//	endpoint.addrv6 = &net.IPNet{IP: ip6, Mask: network.Mask}
-	//	if err = ifInfo.SetIPAddress(endpoint.addrv6); err != nil {
-	//		return err
-	//	}
-	//}
-	//
-	//if err = d.storeUpdate(endpoint); err != nil {
-	//	return fmt.Errorf("failed to save bridge endpoint %s to store: %v", endpoint.id[0:7], err)
-	//}
-	log.Debug("CreateEndpoint resp: [ %+v ]", resp.Interface)
+	endpointInterface := &network.EndpointInterface{}
+	if r.Interface.Address == "" {
+		endpointInterface.Address = hostNic.Addr()
+	}
+	if r.Interface.MacAddress == "" {
+		endpointInterface.MacAddress = hostNic.HardwareAddr()
+	}
+	resp := &network.CreateEndpointResponse{Interface: endpointInterface}
+	log.Debug("CreateEndpoint resp interface: [ %+v ] ", resp.Interface)
 	return resp, nil
 }
-func (d *HostNicDriver) DeleteEndpoint(r *network.DeleteEndpointRequest) error {
-	log.Debug("DeleteEndpoint Called: [ %+v ]", r)
-	return nil
-}
+
 func (d *HostNicDriver) EndpointInfo(r *network.InfoRequest) (*network.InfoResponse, error) {
 	log.Debug("EndpointInfo Called: [ %+v ]", r)
-	//TODO
-	res := &network.InfoResponse{
-		Value: make(map[string]string),
+	d.lock.RLock()
+	defer d.lock.RUnlock()
+	endpoint := d.endpoints[r.EndpointID]
+	if endpoint == nil {
+		return nil, fmt.Errorf("Cannot find endpoint by id: %s", r.EndpointID)
 	}
-	return res, nil
+	value := make(map[string]string)
+	value["id"] = endpoint.id
+	value["srcName"] = endpoint.srcName
+	value["hostNic.Name"] = endpoint.hostNic.NetInterface.Name
+	value["hostNic.Addr"] = endpoint.hostNic.Addr()
+	value["hostNic.HardwareAddr"] = endpoint.hostNic.HardwareAddr()
+	resp := &network.InfoResponse{
+		Value: value,
+	}
+	log.Debug("EndpointInfo resp.Value : [ %+v ]", resp.Value)
+	return resp, nil
 }
 func (d *HostNicDriver) Join(r *network.JoinRequest) (*network.JoinResponse, error) {
 	d.lock.Lock()
@@ -242,19 +197,47 @@ func (d *HostNicDriver) Join(r *network.JoinRequest) (*network.JoinResponse, err
 		return nil, fmt.Errorf("Cannot find endpoint by id: %s", r.EndpointID)
 	}
 
+	if endpoint.sandboxKey != "" {
+		return nil, fmt.Errorf("Endpoint [%s] has bean bind to sandbox [%s]", r.EndpointID, endpoint.sandboxKey)
+	}
+
 	endpoint.sandboxKey = r.SandboxKey
 	resp := network.JoinResponse{
-		InterfaceName:         network.InterfaceName{SrcName: endpoint.srcName, DstPrefix: containerVethPrefix},
-		DisableGatewayService: true,
+		InterfaceName: network.InterfaceName{SrcName: endpoint.srcName, DstPrefix: containerVethPrefix},
 	}
+
+	log.Debug("Join resp : [ %+v ]", resp)
 	return &resp, nil
 }
 func (d *HostNicDriver) Leave(r *network.LeaveRequest) error {
+	log.Debug("Leave Called: [ %+v ]", r)
 	d.lock.Lock()
 	defer d.lock.Unlock()
-	log.Debug("Leave Called: [ %+v ]", r)
+
+	endpoint := d.endpoints[r.EndpointID]
+
+	if endpoint == nil {
+		return fmt.Errorf("Cannot find endpoint by id: %s", r.EndpointID)
+	}
+	endpoint.sandboxKey = ""
+
 	return nil
 }
+
+func (d *HostNicDriver) DeleteEndpoint(r *network.DeleteEndpointRequest) error {
+	log.Debug("DeleteEndpoint Called: [ %+v ]", r)
+	d.lock.Lock()
+	defer d.lock.Unlock()
+
+	endpoint := d.endpoints[r.EndpointID]
+	if endpoint == nil {
+		return fmt.Errorf("Cannot find endpoint by id: %s", r.EndpointID)
+	}
+	delete(d.endpoints, r.EndpointID)
+	endpoint.hostNic.endpoint = nil
+	return nil
+}
+
 func (d *HostNicDriver) DiscoverNew(r *network.DiscoveryNotification) error {
 	log.Debug("DiscoverNew Called: [ %+v ]", r)
 	return nil
@@ -272,80 +255,46 @@ func (d *HostNicDriver) RevokeExternalConnectivity(r *network.RevokeExternalConn
 	return nil
 }
 
-func getExcludeNic(r *network.CreateNetworkRequest) []string {
-	var excludeNics []string
-	if r.Options != nil {
-		if value, ok := r.Options[excludeNicOption].(string); ok {
-			excludeNics = strings.Split(value, ".")
+func (d *HostNicDriver) findNic(filter func(*HostNic) bool) *HostNic {
+	for _, hostNic := range d.nics {
+		log.Debug("Filter nic: [%+v]", hostNic)
+		if filter(hostNic) {
+			return hostNic
 		}
-	} else {
-		copy(excludeNics[:], defaultExcludeNic[:])
 	}
-	return excludeNics
-}
-
-func (d *HostNicDriver) findNics() {
 	nics, err := net.Interfaces()
-
 	if err == nil {
 		for _, nic := range nics {
-			if d.isExcludeNic(nic.Name) {
-				continue
-			}
-			if _, ok := d.allnic[nic.HardwareAddr.String()]; ok {
+			if _, ok := d.nics[nic.HardwareAddr.String()]; ok {
 				continue
 			}
 			hostNic := &HostNic{NetInterface: nic}
-			log.Info("Find new nic: %+v ", nic)
-			d.allnic[hostNic.HardwareAddr()] = hostNic
+			d.nics[hostNic.HardwareAddr()] = hostNic
+			log.Debug("Add nic [%+v] to nic talbe ", hostNic)
+			if filter(hostNic) {
+				return hostNic
+			}
 		}
 	} else {
 		log.Error("Get Interfaces error:%s", err.Error())
 	}
+	return nil
 }
 
-func (d *HostNicDriver) isExcludeNic(nicName string) bool {
-	if nicName == "lo" {
-		return true
-	}
-	for _, nic := range d.excludeNics {
-		if nicName == nic {
+func (d *HostNicDriver) FindNicByHardwareAddr(hardwareAddr string) *HostNic {
+	return d.findNic(func(nic *HostNic) bool {
+		if nic.HardwareAddr() == hardwareAddr {
 			return true
 		}
-	}
-	return false
+		return false
+	})
 }
 
-func (d *HostNicDriver) GetHostNicByHardwareAddr(hardwareAddr string) *HostNic {
-	nic := d.getHostNicByHardwareAddr(hardwareAddr)
-	if nic == nil {
-		d.findNics()
-		nic = d.getHostNicByHardwareAddr(hardwareAddr)
-	}
-	return nic
-}
-
-func (d *HostNicDriver) getHostNicByHardwareAddr(hardwareAddr string) *HostNic {
-	if hostNic, ok := d.allnic[hardwareAddr]; ok {
-		return hostNic
-	}
-	return nil
-}
-
-func (d *HostNicDriver) GetUnusedNic() *HostNic {
-	nic := d.getUnusedNic()
-	if nic == nil {
-		d.findNics()
-		nic = d.getUnusedNic()
-	}
-	return nic
-}
-
-func (d *HostNicDriver) getUnusedNic() *HostNic {
-	for _, nic := range d.allnic {
-		if nic.endpoint == nil {
-			return nic
+func (d *HostNicDriver) FindNicByAddr(addr string) *HostNic {
+	return d.findNic(func(nic *HostNic) bool {
+		if nic.Addr() == addr {
+			return true
 		}
-	}
-	return nil
+		return false
+	})
 }
