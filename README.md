@@ -1,4 +1,4 @@
-# docker-plugin-hostinic
+# docker-plugin-hostnic
 
 ## Usage
 
