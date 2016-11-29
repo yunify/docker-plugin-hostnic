@@ -177,7 +177,8 @@ func (d *HostNicDriver) Join(r *network.JoinRequest) (*network.JoinResponse, err
 
 	endpoint.sandboxKey = r.SandboxKey
 	resp := network.JoinResponse{
-		InterfaceName: network.InterfaceName{SrcName: endpoint.srcName, DstPrefix: containerVethPrefix},
+		InterfaceName:         network.InterfaceName{SrcName: endpoint.srcName, DstPrefix: containerVethPrefix},
+		DisableGatewayService: true,
 	}
 
 	log.Debug("Join resp : [ %+v ]", resp)
@@ -261,7 +262,7 @@ func (d *HostNicDriver) findNicFromLinks(hardwareAddr string) *HostNic {
 func (d *HostNicDriver) FindNicByHardwareAddr(hardwareAddr string) *HostNic {
 	for _, nic := range d.nics {
 		//ensure nic in cache is exist on host.
-		if !d.isNicExist(nic.HardwareAddr) {
+		if !d.ensureNic(nic) {
 			log.Info("Delete nic [%+v] to nic talbe", nic)
 			delete(d.nics, nic.HardwareAddr)
 			continue
@@ -281,11 +282,15 @@ func (d *HostNicDriver) FindNicByHardwareAddr(hardwareAddr string) *HostNic {
 	return nic
 }
 
-// IsNicExist check nic is exist
-func (d *HostNicDriver) isNicExist(hardwareAddr string) bool {
-	nic := d.findNicFromInterfaces(hardwareAddr)
-	if nic == nil {
-		nic = d.findNicFromLinks(hardwareAddr)
+// ensureNic ensure nic exist and info is update
+func (d *HostNicDriver) ensureNic(nic *HostNic) bool {
+	existNic := d.findNicFromInterfaces(nic.HardwareAddr)
+	if existNic == nil {
+		existNic = d.findNicFromLinks(nic.HardwareAddr)
 	}
-	return nic != nil
+	if existNic != nil {
+		// nic dev name may be changed by os, so ensure it is update.
+		nic.Name = existNic.Name
+	}
+	return existNic != nil
 }
