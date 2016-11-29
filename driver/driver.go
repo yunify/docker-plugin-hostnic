@@ -3,10 +3,10 @@ package driver
 import (
 	"fmt"
 	"github.com/docker/go-plugins-helpers/network"
+	"github.com/vishvananda/netlink"
 	"github.com/yunify/docker-plugin-hostnic/log"
 	"net"
 	"sync"
-	"github.com/vishvananda/netlink"
 )
 
 const (
@@ -21,7 +21,6 @@ type HostNic struct {
 	HardwareAddr string
 	Address      string
 	endpoint     *Endpoint
-
 }
 
 type Endpoint struct {
@@ -110,19 +109,11 @@ func (d *HostNicDriver) CreateEndpoint(r *network.CreateEndpointRequest) (*netwo
 		return nil, fmt.Errorf("Can not find host nic by mac address [%+v] ", r.Interface.MacAddress)
 	}
 
-	if r.Interface.Address != "" && hostNic.Address != "" {
-		if hostNic.Address != r.Interface.Address {
-			return nil, fmt.Errorf("Request interface ip address [%s] miss match with host nic address [%s]", r.Interface.Address, hostNic.Address)
-		}
-	}
-
 	if hostNic.endpoint != nil {
 		return nil, fmt.Errorf("Host nic [%s] has bind to endpoint [ %+v ] ", hostNic.Name, hostNic.endpoint)
 	}
 
-	if hostNic.Address == "" {
-		hostNic.Address = r.Interface.Address
-	}
+	hostNic.Address = r.Interface.Address
 
 	//TODO check host ip and driver network
 
@@ -238,12 +229,12 @@ func (d *HostNicDriver) RevokeExternalConnectivity(r *network.RevokeExternalConn
 	return nil
 }
 
-func (d *HostNicDriver) findNicFromInterfaces(hardwareAddr string) (*HostNic) {
+func (d *HostNicDriver) findNicFromInterfaces(hardwareAddr string) *HostNic {
 	nics, err := net.Interfaces()
 	if err == nil {
 		for _, nic := range nics {
 			if nic.HardwareAddr.String() == hardwareAddr {
-				return &HostNic{Name:nic.Name, HardwareAddr:nic.HardwareAddr.String(), Address:GetInterfaceIPAddr(nic)}
+				return &HostNic{Name: nic.Name, HardwareAddr: nic.HardwareAddr.String(), Address: GetInterfaceIPAddr(nic)}
 			}
 		}
 	} else {
@@ -252,16 +243,16 @@ func (d *HostNicDriver) findNicFromInterfaces(hardwareAddr string) (*HostNic) {
 	return nil
 }
 
-func (d *HostNicDriver) findNicFromLinks(hardwareAddr string) (*HostNic)  {
+func (d *HostNicDriver) findNicFromLinks(hardwareAddr string) *HostNic {
 	links, err := netlink.LinkList()
 	if err == nil {
 		for _, link := range links {
 			attr := link.Attrs()
 			if attr.HardwareAddr.String() == hardwareAddr {
-				return &HostNic{Name:attr.Name, HardwareAddr:attr.HardwareAddr.String()}
+				return &HostNic{Name: attr.Name, HardwareAddr: attr.HardwareAddr.String()}
 			}
 		}
-	}else{
+	} else {
 		log.Error("Get LinkList error:%s", err.Error())
 	}
 	return nil
@@ -270,7 +261,7 @@ func (d *HostNicDriver) findNicFromLinks(hardwareAddr string) (*HostNic)  {
 func (d *HostNicDriver) FindNicByHardwareAddr(hardwareAddr string) *HostNic {
 	for _, nic := range d.nics {
 		//ensure nic in cache is exist on host.
-		if !d.isNicExist(nic.HardwareAddr){
+		if !d.isNicExist(nic.HardwareAddr) {
 			log.Info("Delete nic [%+v] to nic talbe", nic)
 			delete(d.nics, nic.HardwareAddr)
 			continue
@@ -291,7 +282,7 @@ func (d *HostNicDriver) FindNicByHardwareAddr(hardwareAddr string) *HostNic {
 }
 
 // IsNicExist check nic is exist
-func (d *HostNicDriver) isNicExist(hardwareAddr string) bool{
+func (d *HostNicDriver) isNicExist(hardwareAddr string) bool {
 	nic := d.findNicFromInterfaces(hardwareAddr)
 	if nic == nil {
 		nic = d.findNicFromLinks(hardwareAddr)
