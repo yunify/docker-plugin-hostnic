@@ -9,6 +9,7 @@ go:
     - 1.7
 before_install:
 install:
+-script:
     - "./build_with_docker"
 after_success:
     - docker login -e="$DOCKER_EMAIL" -u="$DOCKER_USERNAME" -p="$DOCKER_PASSWORD";
