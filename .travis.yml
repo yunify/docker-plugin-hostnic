@@ -10,8 +10,6 @@ go:
 before_install:
 install:
     - "./build_with_docker"
-script:
-    - "./test"
 after_success:
     - docker login -e="$DOCKER_EMAIL" -u="$DOCKER_USERNAME" -p="$DOCKER_PASSWORD";
     - docker build -t qingcloud/docker-plugin-hostnic .
