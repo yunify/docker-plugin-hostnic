@@ -10,7 +10,7 @@ go:
 before_install:
 install:
     - bash ./build_with_docker
--script:
+script:
     - bash ./test
 after_success:
     - docker login -e="$DOCKER_EMAIL" -u="$DOCKER_USERNAME" -p="$DOCKER_PASSWORD";
