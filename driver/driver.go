@@ -62,7 +62,7 @@ func (d *HostNicDriver) CreateNetwork(r *network.CreateNetworkRequest) error {
 	defer d.lock.Unlock()
 
 	if d.network != "" {
-		fmt.Errorf("only one instance of %s network is allowed,  network [%s] exist.", networkType, d.network)
+		return fmt.Errorf("only one instance of %s network is allowed,  network [%s] exist.", networkType, d.network)
 	}
 	d.network = r.NetworkID
 	if r.IPv4Data != nil && len(r.IPv4Data) > 0 {
@@ -174,11 +174,15 @@ func (d *HostNicDriver) Join(r *network.JoinRequest) (*network.JoinResponse, err
 	if endpoint.sandboxKey != "" {
 		return nil, fmt.Errorf("Endpoint [%s] has bean bind to sandbox [%s]", r.EndpointID, endpoint.sandboxKey)
 	}
-
+	gw, _, err := net.ParseCIDR(d.ipv4Data.Gateway)
+	if err != nil {
+		return nil, fmt.Errorf("Parse gateway [%s] error: %s", d.ipv4Data.Gateway, err.Error())
+	}
 	endpoint.sandboxKey = r.SandboxKey
 	resp := network.JoinResponse{
 		InterfaceName:         network.InterfaceName{SrcName: endpoint.srcName, DstPrefix: containerVethPrefix},
-		DisableGatewayService: true,
+		DisableGatewayService: false,
+		Gateway:               gw.String(),
 	}
 
 	log.Debug("Join resp : [ %+v ]", resp)
