@@ -39,6 +39,7 @@ func New() *HostNicDriver {
 		lock:      sync.RWMutex{},
 		nics:      make(NicTable),
 	}
+
 	return d
 }
 
@@ -62,19 +63,26 @@ func (d *HostNicDriver) CreateNetwork(r *network.CreateNetworkRequest) error {
 	defer d.lock.Unlock()
 
 	if d.network != "" {
-		return fmt.Errorf("only one instance of %s network is allowed,  network [%s] exist.", networkType, d.network)
+		return fmt.Errorf("Only one instance of %s network is allowed,  network [%s] exist.", networkType, d.network)
 	}
 	d.network = r.NetworkID
-	if r.IPv4Data != nil && len(r.IPv4Data) > 0 {
-		d.ipv4Data = r.IPv4Data[0]
-		log.Debug("CreateNetwork IPv4Data : [ %+v ]", d.ipv4Data)
+	if r.IPv4Data == nil || len(r.IPv4Data) == 0 {
+		return fmt.Errorf("Network gateway config miss.")
 	}
+	d.ipv4Data = r.IPv4Data[0]
+	log.Info("CreateNetwork [%s] IPv4Data : [ %+v ]", d.network, d.ipv4Data)
 	return nil
 }
+
+func (d *HostNicDriver) isInited() bool {
+	return d.network != ""
+}
+
 func (d *HostNicDriver) AllocateNetwork(r *network.AllocateNetworkRequest) (*network.AllocateNetworkResponse, error) {
 	log.Debug("AllocateNetwork Called: [ %+v ]", r)
 	return nil, nil
 }
+
 func (d *HostNicDriver) DeleteNetwork(r *network.DeleteNetworkRequest) error {
 	log.Debug("DeleteNetwork Called: [ %+v ]", r)
 	d.lock.Lock()
@@ -97,6 +105,11 @@ func (d *HostNicDriver) CreateEndpoint(r *network.CreateEndpointRequest) (*netwo
 	log.Debug("CreateEndpoint Called: [ %+v ]", r)
 	log.Debug("r.Interface: [ %+v ]", r.Interface)
 
+	//if network config lost.
+	if !d.isInited() {
+		return nil, fmt.Errorf("Network is not inited, please create network first, if hostnic network exist, please delete and create again.")
+	}
+
 	var hostNic *HostNic
 
 	if r.Interface.MacAddress == "" {
@@ -114,11 +127,7 @@ func (d *HostNicDriver) CreateEndpoint(r *network.CreateEndpointRequest) (*netwo
 	}
 
 	hostNic.Address = r.Interface.Address
-
-	//TODO check host ip and driver network
-
 	hostIfName := hostNic.Name
-
 	endpoint := &Endpoint{}
 
 	// Store the sandbox side pipe interface parameters
