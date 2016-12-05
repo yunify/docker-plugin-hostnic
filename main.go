@@ -1,11 +1,11 @@
 package main
 
 import (
-	"os"
+	"github.com/docker/go-plugins-helpers/network"
 	"github.com/urfave/cli"
 	"github.com/yunify/docker-plugin-hostnic/driver"
-	"github.com/docker/go-plugins-helpers/network"
 	"github.com/yunify/docker-plugin-hostnic/log"
+	"os"
 )
 
 const (
@@ -35,9 +35,11 @@ func Run(ctx *cli.Context) {
 		log.SetLevel("debug")
 	}
 	log.Info("Run %s", ctx.App.Name)
-	d := driver.New()
-	h := network.NewHandler(d)
-	err := h.ServeUnix("root", "hostnic")
+	d, err := driver.New()
+	if err == nil {
+		h := network.NewHandler(d)
+		err = h.ServeUnix("root", "hostnic")
+	}
 	if err != nil {
 		log.Fatal("Run app error: %s", err.Error())
 		os.Exit(1)

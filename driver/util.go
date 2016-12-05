@@ -1,8 +1,9 @@
 package driver
 
 import (
-	"net"
 	"github.com/yunify/docker-plugin-hostnic/log"
+	"net"
+	"os"
 )
 
 func GetInterfaceIPAddr(ifi net.Interface) string {
@@ -19,4 +20,15 @@ func GetInterfaceIPAddr(ifi net.Interface) string {
 		}
 	}
 	return ""
+}
+
+func FileExists(path string) (bool, error) {
+	_, err := os.Stat(path)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return true, err
 }

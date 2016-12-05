@@ -1,17 +1,21 @@
 package driver
 
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/docker/go-plugins-helpers/network"
 	"github.com/vishvananda/netlink"
 	"github.com/yunify/docker-plugin-hostnic/log"
+	"io/ioutil"
 	"net"
+	"os"
 	"sync"
 )
 
 const (
 	networkType         = "hostnic"
 	containerVethPrefix = "eth"
+	configDir           = "/etc/docker/hostnic"
 )
 
 type NicTable map[string]*HostNic
@@ -33,14 +37,26 @@ type Endpoint struct {
 	sandboxKey string
 }
 
-func New() *HostNicDriver {
+func New() (*HostNicDriver, error) {
+	err := os.MkdirAll(configDir, os.FileMode(0755))
+	if err != nil {
+		return nil, err
+	}
 	d := &HostNicDriver{
 		endpoints: make(map[string]*Endpoint),
 		lock:      sync.RWMutex{},
 		nics:      make(NicTable),
 	}
+	err = d.loadConfig()
+	if err != nil {
+		return nil, err
+	}
+	return d, nil
+}
 
-	return d
+type Config struct {
+	Network  string
+	IPv4Data *network.IPAMData
 }
 
 //HostNicDriver implements github.com/docker/go-plugins-helpers/network.Driver
@@ -71,6 +87,7 @@ func (d *HostNicDriver) CreateNetwork(r *network.CreateNetworkRequest) error {
 	}
 	d.ipv4Data = r.IPv4Data[0]
 	log.Info("CreateNetwork [%s] IPv4Data : [ %+v ]", d.network, d.ipv4Data)
+	d.saveConfig()
 	return nil
 }
 
@@ -87,11 +104,15 @@ func (d *HostNicDriver) DeleteNetwork(r *network.DeleteNetworkRequest) error {
 	log.Debug("DeleteNetwork Called: [ %+v ]", r)
 	d.lock.Lock()
 	defer d.lock.Unlock()
-	d.network = ""
-	d.ipv4Data = nil
-	d.endpoints = make(map[string]*Endpoint)
-	d.nics = make(NicTable)
-
+	if r.NetworkID == d.network {
+		d.network = ""
+		d.ipv4Data = nil
+		d.endpoints = make(map[string]*Endpoint)
+		d.nics = make(NicTable)
+	} else {
+		log.Error("DeleteNetwork request network id [%s] != driver network [%s]", r.NetworkID, d.network)
+	}
+	d.saveConfig()
 	return nil
 }
 func (d *HostNicDriver) FreeNetwork(r *network.FreeNetworkRequest) error {
@@ -306,4 +327,43 @@ func (d *HostNicDriver) ensureNic(nic *HostNic) bool {
 		nic.Name = existNic.Name
 	}
 	return existNic != nil
+}
+
+func (d *HostNicDriver) loadConfig() error {
+	configFile := fmt.Sprintf("%s/%s", configDir, "config.json")
+	exists, err := FileExists(configFile)
+	if err != nil {
+		return err
+	}
+	if exists {
+		configData, err := ioutil.ReadFile(configFile)
+		if err != nil {
+			return err
+		}
+		config := &Config{}
+		err = json.Unmarshal(configData, config)
+		if err != nil {
+			return err
+		}
+		log.Info("Load config [%+v] from [%s]", config, configFile)
+		d.network = config.Network
+		d.ipv4Data = config.IPv4Data
+	}
+	return nil
+}
+
+//write driver network to file, wait docker 1.3 to support plugin data persistence.
+func (d *HostNicDriver) saveConfig() error {
+	configFile := fmt.Sprintf("%s/%s", configDir, "config.json")
+	config := &Config{Network: d.network, IPv4Data: d.ipv4Data}
+	data, err := json.Marshal(config)
+	if err != nil {
+		return err
+	}
+	err = ioutil.WriteFile(configFile, data, os.FileMode(0644))
+	if err != nil {
+		return err
+	}
+	log.Debug("Save config [%+v] to [%s]", config, configFile)
+	return nil
 }
