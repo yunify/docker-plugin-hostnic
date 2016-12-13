@@ -43,9 +43,9 @@ func New() (*HostNicDriver, error) {
 		return nil, err
 	}
 	d := &HostNicDriver{
-		endpoints: make(map[string]*Endpoint),
-		lock:      sync.RWMutex{},
-		nics:      make(NicTable),
+		networks: Networks{},
+		lock:     sync.RWMutex{},
+		nics:     make(NicTable),
 	}
 	err = d.loadConfig()
 	if err != nil {
@@ -54,18 +54,33 @@ func New() (*HostNicDriver, error) {
 	return d, nil
 }
 
-type Config struct {
-	Network  string
-	IPv4Data *network.IPAMData
+type Networks map[string]*Network
+
+type Network struct {
+	ID        string
+	IPv4Data  *network.IPAMData
+	endpoints map[string]*Endpoint
 }
 
 //HostNicDriver implements github.com/docker/go-plugins-helpers/network.Driver
 type HostNicDriver struct {
-	network   string
-	nics      NicTable
-	endpoints map[string]*Endpoint
-	lock      sync.RWMutex
-	ipv4Data  *network.IPAMData
+	networks Networks
+	nics     NicTable
+	lock     sync.RWMutex
+}
+
+func (d *HostNicDriver) RegisterNetwork(networkID string, ipv4Data *network.IPAMData) error {
+	if nw := d.getNetworkByGateway(ipv4Data.Gateway); nw != nil {
+		return fmt.Errorf("Exist network [%s] with same gateway [%s]", nw.ID, nw.IPv4Data.Gateway)
+	}
+	nw := Network{
+		IPv4Data:  ipv4Data,
+		ID:        networkID,
+		endpoints: make(map[string]*Endpoint),
+	}
+	d.networks[networkID] = &nw
+	log.Info("RegisterNetwork [%s] IPv4Data : [ %+v ]", nw.ID, nw.IPv4Data)
+	return nil
 }
 
 func (d *HostNicDriver) GetCapabilities() (*network.CapabilitiesResponse, error) {
@@ -77,22 +92,16 @@ func (d *HostNicDriver) CreateNetwork(r *network.CreateNetworkRequest) error {
 	log.Debug("CreateNetwork IPv4Data len : [ %v ]", len(r.IPv4Data))
 	d.lock.Lock()
 	defer d.lock.Unlock()
-
-	if d.network != "" {
-		return fmt.Errorf("Only one instance of %s network is allowed,  network [%s] exist.", networkType, d.network)
-	}
-	d.network = r.NetworkID
 	if r.IPv4Data == nil || len(r.IPv4Data) == 0 {
 		return fmt.Errorf("Network gateway config miss.")
 	}
-	d.ipv4Data = r.IPv4Data[0]
-	log.Info("CreateNetwork [%s] IPv4Data : [ %+v ]", d.network, d.ipv4Data)
+	ipv4Data := r.IPv4Data[0]
+	err := d.RegisterNetwork(r.NetworkID, ipv4Data)
+	if err != nil {
+		return err
+	}
 	d.saveConfig()
 	return nil
-}
-
-func (d *HostNicDriver) isInited() bool {
-	return d.network != ""
 }
 
 func (d *HostNicDriver) AllocateNetwork(r *network.AllocateNetworkRequest) (*network.AllocateNetworkResponse, error) {
@@ -104,14 +113,7 @@ func (d *HostNicDriver) DeleteNetwork(r *network.DeleteNetworkRequest) error {
 	log.Debug("DeleteNetwork Called: [ %+v ]", r)
 	d.lock.Lock()
 	defer d.lock.Unlock()
-	if r.NetworkID == d.network {
-		d.network = ""
-		d.ipv4Data = nil
-		d.endpoints = make(map[string]*Endpoint)
-		d.nics = make(NicTable)
-	} else {
-		log.Error("DeleteNetwork request network id [%s] != driver network [%s]", r.NetworkID, d.network)
-	}
+	delete(d.networks, r.NetworkID)
 	d.saveConfig()
 	return nil
 }
@@ -125,10 +127,10 @@ func (d *HostNicDriver) CreateEndpoint(r *network.CreateEndpointRequest) (*netwo
 
 	log.Debug("CreateEndpoint Called: [ %+v ]", r)
 	log.Debug("r.Interface: [ %+v ]", r.Interface)
+	nw := d.networks[r.NetworkID]
 
-	//if network config lost.
-	if !d.isInited() {
-		return nil, fmt.Errorf("Network is not inited, please create network first, if hostnic network exist, please delete and create again.")
+	if nw == nil {
+		return nil, fmt.Errorf("Can not find network [ %s ].", r.NetworkID)
 	}
 
 	var hostNic *HostNic
@@ -156,7 +158,7 @@ func (d *HostNicDriver) CreateEndpoint(r *network.CreateEndpointRequest) (*netwo
 	endpoint.hostNic = hostNic
 	endpoint.id = r.EndpointID
 
-	d.endpoints[endpoint.id] = endpoint
+	nw.endpoints[endpoint.id] = endpoint
 	hostNic.endpoint = endpoint
 
 	endpointInterface := &network.EndpointInterface{}
@@ -175,10 +177,16 @@ func (d *HostNicDriver) EndpointInfo(r *network.InfoRequest) (*network.InfoRespo
 	log.Debug("EndpointInfo Called: [ %+v ]", r)
 	d.lock.RLock()
 	defer d.lock.RUnlock()
-	endpoint := d.endpoints[r.EndpointID]
+	nw := d.networks[r.NetworkID]
+	if nw == nil {
+		return nil, fmt.Errorf("Can not find network [ %s ].", r.NetworkID)
+	}
+
+	endpoint := nw.endpoints[r.EndpointID]
 	if endpoint == nil {
 		return nil, fmt.Errorf("Cannot find endpoint by id: %s", r.EndpointID)
 	}
+
 	value := make(map[string]string)
 	value["id"] = endpoint.id
 	value["srcName"] = endpoint.srcName
@@ -195,8 +203,13 @@ func (d *HostNicDriver) Join(r *network.JoinRequest) (*network.JoinResponse, err
 	d.lock.Lock()
 	defer d.lock.Unlock()
 	log.Debug("Join Called: [ %+v ]", r)
-	endpoint := d.endpoints[r.EndpointID]
 
+	nw := d.networks[r.NetworkID]
+	if nw == nil {
+		return nil, fmt.Errorf("Can not find network [ %s ].", r.NetworkID)
+	}
+
+	endpoint := nw.endpoints[r.EndpointID]
 	if endpoint == nil {
 		return nil, fmt.Errorf("Cannot find endpoint by id: %s", r.EndpointID)
 	}
@@ -204,9 +217,9 @@ func (d *HostNicDriver) Join(r *network.JoinRequest) (*network.JoinResponse, err
 	if endpoint.sandboxKey != "" {
 		return nil, fmt.Errorf("Endpoint [%s] has bean bind to sandbox [%s]", r.EndpointID, endpoint.sandboxKey)
 	}
-	gw, _, err := net.ParseCIDR(d.ipv4Data.Gateway)
+	gw, _, err := net.ParseCIDR(nw.IPv4Data.Gateway)
 	if err != nil {
-		return nil, fmt.Errorf("Parse gateway [%s] error: %s", d.ipv4Data.Gateway, err.Error())
+		return nil, fmt.Errorf("Parse gateway [%s] error: %s", nw.IPv4Data.Gateway, err.Error())
 	}
 	endpoint.sandboxKey = r.SandboxKey
 	resp := network.JoinResponse{
@@ -223,13 +236,17 @@ func (d *HostNicDriver) Leave(r *network.LeaveRequest) error {
 	d.lock.Lock()
 	defer d.lock.Unlock()
 
-	endpoint := d.endpoints[r.EndpointID]
+	nw := d.networks[r.NetworkID]
+	if nw == nil {
+		return fmt.Errorf("Can not find network [ %s ].", r.NetworkID)
+	}
 
+	endpoint := nw.endpoints[r.EndpointID]
 	if endpoint == nil {
 		return fmt.Errorf("Cannot find endpoint by id: %s", r.EndpointID)
 	}
-	endpoint.sandboxKey = ""
 
+	endpoint.sandboxKey = ""
 	return nil
 }
 
@@ -237,12 +254,16 @@ func (d *HostNicDriver) DeleteEndpoint(r *network.DeleteEndpointRequest) error {
 	log.Debug("DeleteEndpoint Called: [ %+v ]", r)
 	d.lock.Lock()
 	defer d.lock.Unlock()
+	nw := d.networks[r.NetworkID]
+	if nw == nil {
+		return fmt.Errorf("Can not find network [ %s ].", r.NetworkID)
+	}
 
-	endpoint := d.endpoints[r.EndpointID]
+	endpoint := nw.endpoints[r.EndpointID]
 	if endpoint == nil {
 		return fmt.Errorf("Cannot find endpoint by id: %s", r.EndpointID)
 	}
-	delete(d.endpoints, r.EndpointID)
+	delete(nw.endpoints, r.EndpointID)
 	endpoint.hostNic.endpoint = nil
 	return nil
 }
@@ -261,6 +282,15 @@ func (d *HostNicDriver) ProgramExternalConnectivity(r *network.ProgramExternalCo
 }
 func (d *HostNicDriver) RevokeExternalConnectivity(r *network.RevokeExternalConnectivityRequest) error {
 	log.Debug("RevokeExternalConnectivity Called: [ %+v ]", r)
+	return nil
+}
+
+func (d *HostNicDriver) getNetworkByGateway(gateway string) *Network {
+	for _, nw := range d.networks {
+		if nw.IPv4Data.Gateway == gateway {
+			return nw
+		}
+	}
 	return nil
 }
 
@@ -340,14 +370,15 @@ func (d *HostNicDriver) loadConfig() error {
 		if err != nil {
 			return err
 		}
-		config := &Config{}
-		err = json.Unmarshal(configData, config)
+		networks := Networks{}
+		err = json.Unmarshal(configData, &networks)
 		if err != nil {
 			return err
 		}
-		log.Info("Load config [%+v] from [%s]", config, configFile)
-		d.network = config.Network
-		d.ipv4Data = config.IPv4Data
+		log.Info("Load config from [%s]", configFile)
+		for _, nw := range networks {
+			d.RegisterNetwork(nw.ID, nw.IPv4Data)
+		}
 	}
 	return nil
 }
@@ -355,8 +386,7 @@ func (d *HostNicDriver) loadConfig() error {
 //write driver network to file, wait docker 1.3 to support plugin data persistence.
 func (d *HostNicDriver) saveConfig() error {
 	configFile := fmt.Sprintf("%s/%s", configDir, "config.json")
-	config := &Config{Network: d.network, IPv4Data: d.ipv4Data}
-	data, err := json.Marshal(config)
+	data, err := json.Marshal(d.networks)
 	if err != nil {
 		return err
 	}
@@ -364,6 +394,6 @@ func (d *HostNicDriver) saveConfig() error {
 	if err != nil {
 		return err
 	}
-	log.Debug("Save config [%+v] to [%s]", config, configFile)
+	log.Debug("Save config [%+v] to [%s]", d.networks, configFile)
 	return nil
 }
